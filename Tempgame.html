@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เกมแปลงอุณหภูมิ - ใช้มือควบคุม</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            background-color: #111827; /* gray-900 */
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* กล่องเกม 16:9 จบในหน้าจอ และอยู่กึ่งกลาง */
+        #game-container {
+            position: relative;
+            background-color: #1f2937; /* gray-800 */
+            width: 100vw;
+            height: 100vh;
+            max-width: 177.77vh; /* 16/9 * 100 */
+            max-height: 56.25vw; /* 9/16 * 100 */
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+            border-radius: 1rem;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.4;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+
+        /* Cursor สำหรับนิ้ว */
+        #cursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: #ef4444; /* red-500 */
+            border: 3px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none; /* ไม่บังการคลิก */
+            z-index: 50;
+            box-shadow: 0 0 15px #ef4444;
+            display: none;
+            transition: width 0.1s, height 0.1s;
+        }
+
+        /* ปุ่มที่สามารถใช้มือ Hover ได้ */
+        .interactable {
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s, background-color 0.2s;
+        }
+
+        .interactable::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            height: 8px;
+            width: var(--hover-progress, 0%);
+            background: #22c55e; /* green-500 */
+            transition: width 0.05s linear;
+        }
+        
+        /* Loading Spinner */
+        .loader {
+            border: 6px solid #374151;
+            border-top: 6px solid #3b82f6;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Animation ง่ายๆ */
+        .fade-in { animation: fadeIn 0.3s forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+        /* =========================================
+           Visual Effects สุดอลังการสำหรับตอบคำถาม
+           ========================================= */
+        
+        /* แสงวาบแบบสายฟ้าฟาด (ตอบถูก) */
+        @keyframes flash-lightning {
+            0%   { background-color: transparent; opacity: 0; }
+            10%  { background-color: #ffffff; opacity: 0.9; }
+            20%  { background-color: transparent; opacity: 0; }
+            30%  { background-color: #e0f2fe; opacity: 0.7; }
+            100% { background-color: transparent; opacity: 0; }
+        }
+
+        /* แสงวาบสีแดง (ตอบผิด) */
+        @keyframes flash-error {
+            0%   { background-color: transparent; opacity: 0; }
+            10%  { background-color: #ef4444; opacity: 0.8; }
+            20%  { background-color: transparent; opacity: 0; }
+            30%  { background-color: #f87171; opacity: 0.6; }
+            100% { background-color: transparent; opacity: 0; }
+        }
+
+        /* หน้าจอสั่นสะเทือน */
+        @keyframes shake-screen {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            25%  { transform: translate(6px, 6px) rotate(1deg); }
+            50%  { transform: translate(-6px, -3px) rotate(-1deg); }
+            75%  { transform: translate(-3px, 6px) rotate(1deg); }
+        }
+
+        /* ปุ่มเด้งและมีแสงออร่ารอบๆ */
+        @keyframes pop-button {
+            0%   { transform: scale(1); }
+            50%  { transform: scale(1.15); box-shadow: 0 0 50px rgba(255, 255, 255, 0.9); z-index: 100; }
+            100% { transform: scale(1); }
+        }
+
+        .fx-lightning { animation: flash-lightning 0.6s ease-out; }
+        .fx-error { animation: flash-error 0.6s ease-out; }
+        .fx-shake { animation: shake-screen 0.35s ease-in-out; }
+        .fx-pop { animation: pop-button 0.4s ease-out; z-index: 50; }
+        
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- วิดีโอซ่อนไว้สำหรับรับภาพกล้อง -->
+        <video id="input_video" style="display:none;" autoplay playsinline></video>
+        <!-- Canvas วาดภาพพื้นหลัง (กล้อง) และเส้นโครงมือ -->
+        <canvas id="output_canvas"></canvas>
+
+        <div id="ui-layer">
+            <!-- เคอร์เซอร์นิ้วชี้ -->
+            <div id="cursor"></div>
+
+            <!-- หน้าจอโหลด / ขอสิทธิ์กล้อง -->
+            <div id="screen-loading" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-20">
+                <h1 class="text-4xl font-bold text-white mb-6 text-center">เกมแปลงอุณหภูมิ 🌡️</h1>
+                <p class="text-gray-300 text-lg mb-8 text-center max-w-lg">
+                    เกมนี้ใช้กล้องเว็บแคมในการเล่น<br>กรุณากดปุ่มด้านล่างและอนุญาตการเข้าถึงกล้อง
+                </p>
+                <button id="btn-start-cam" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-xl text-xl shadow-lg transition-transform transform hover:scale-105">
+                    เปิดกล้องและเริ่มเกม
+                </button>
+                <div id="loading-spinner" class="mt-8 hidden flex-col items-center">
+                    <div class="loader mb-4"></div>
+                    <p class="text-blue-400 text-center">กำลังโหลดระบบตรวจจับมือ (MediaPipe)...</p>
+                </div>
+            </div>
+
+            <!-- หน้าเมนูหลัก -->
+            <div id="screen-menu" class="absolute inset-0 hidden flex-col items-center justify-center p-8 z-20 bg-gray-900/80 backdrop-blur-sm">
+                <h1 class="text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500 mb-2 drop-shadow-md text-center">
+                    🌡️ TEMPERATURE MASTER
+                </h1>
+                <p class="text-white text-xl mb-10 text-center">ใช้มือชี้ค้างไว้ที่ปุ่มเพื่อเลือก (มีเฉพาะเลขลงตัว!)</p>
+                
+                <div class="flex gap-6 w-full max-w-3xl justify-center">
+                    <button class="interactable mode-btn bg-green-600 border-4 border-green-700 text-white rounded-2xl p-6 flex-1 text-center shadow-xl flex flex-col items-center justify-center" data-mode="30s">
+                        <span class="text-4xl mb-2 font-bold">⏱️ 30 วิ</span>
+                        <span class="text-lg opacity-80">รวดเร็ว ทันใจ</span>
+                    </button>
+                    <button class="interactable mode-btn bg-blue-600 border-4 border-blue-700 text-white rounded-2xl p-6 flex-1 text-center shadow-xl flex flex-col items-center justify-center" data-mode="60s">
+                        <span class="text-4xl mb-2 font-bold">⏱️ 60 วิ</span>
+                        <span class="text-lg opacity-80">ทดสอบความแม่นยำ</span>
+                    </button>
+                    <button class="interactable mode-btn bg-red-600 border-4 border-red-700 text-white rounded-2xl p-6 flex-1 text-center shadow-xl flex flex-col items-center justify-center" data-mode="survivor">
+                        <span class="text-4xl mb-2 font-bold">🔥 Survivor</span>
+                        <span class="text-lg opacity-80">ตอบถูกเพิ่มเวลา</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- หน้าเล่นเกม -->
+            <div id="screen-play" class="absolute inset-0 hidden z-20">
+                <!-- แถบด้านบน HUD -->
+                <div class="absolute top-0 left-0 w-full p-6 flex justify-between items-start z-30 pointer-events-none">
+                    <div class="bg-gray-800/80 border-2 border-gray-600 rounded-lg px-6 py-3 flex items-center shadow-lg pointer-events-auto">
+                        <span class="text-gray-300 text-xl mr-3">เวลา:</span>
+                        <span id="timer-display" class="text-3xl font-bold text-yellow-400">30</span>
+                    </div>
+                    <div class="bg-gray-800/80 border-2 border-gray-600 rounded-lg px-6 py-3 flex items-center shadow-lg pointer-events-auto">
+                        <span class="text-gray-300 text-xl mr-3">คะแนน:</span>
+                        <span id="score-display" class="text-3xl font-bold text-white">0</span>
+                    </div>
+                </div>
+
+                <!-- คำถามและตัวเลือก -->
+                <div class="absolute inset-0 flex flex-col justify-center items-center pt-12">
+                    <div class="bg-gray-800/90 border-4 border-gray-600 rounded-3xl p-8 mb-8 shadow-2xl text-center min-w-[60%] flex flex-col items-center justify-center">
+                        <h2 class="text-3xl text-gray-300 font-semibold mb-2 text-center">เปลี่ยนหน่วยเป็น <span id="target-unit-text" class="text-blue-400">...</span></h2>
+                        <div id="question-text" class="text-6xl font-bold text-white tracking-wide text-center">
+                            20 °C = ? °F
+                        </div>
+                    </div>
+
+                    <!-- ตัวเลือก 4 ข้อ -->
+                    <div class="grid grid-cols-2 gap-6 w-full max-w-4xl" id="choices-container">
+                        <!-- ปุ่มจะถูกสร้างผ่าน JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- หน้าสรุปผล -->
+            <div id="screen-gameover" class="absolute inset-0 hidden flex-col items-center justify-center bg-gray-900/90 backdrop-blur-md z-30">
+                <h1 class="text-6xl font-bold text-white mb-4 text-center">หมดเวลา! ⏱️</h1>
+                <p class="text-2xl text-gray-300 mb-2 text-center">คะแนนรวมของคุณ</p>
+                <div id="final-score" class="text-8xl font-black text-yellow-400 mb-8 drop-shadow-[0_0_15px_rgba(250,204,21,0.6)] text-center">
+                    0
+                </div>
+                
+                <!-- ส่วนสรุปผลเพิ่มเติม -->
+                <div class="flex gap-8 mb-10 bg-gray-800/80 p-6 rounded-2xl border-2 border-gray-600 items-center justify-center">
+                    <div class="text-center flex flex-col items-center justify-center px-4">
+                        <p class="text-xl text-gray-300 mb-1">ตอบถูก ✅</p>
+                        <p id="final-correct" class="text-4xl font-bold text-green-400">0</p>
+                        <p class="text-sm text-gray-400">ข้อ</p>
+                    </div>
+                    <div class="w-px h-16 bg-gray-600"></div>
+                    <div class="text-center flex flex-col items-center justify-center px-4">
+                        <p class="text-xl text-gray-300 mb-1">ตอบผิด ❌</p>
+                        <p id="final-wrong" class="text-4xl font-bold text-red-400">0</p>
+                        <p class="text-sm text-gray-400">ข้อ</p>
+                    </div>
+                </div>
+
+                <!-- กลุ่มปุ่มเล่นใหม่ และ เมนูหลัก -->
+                <div class="flex gap-6">
+                    <button id="btn-restart" class="interactable bg-green-500 text-white border-4 border-green-600 font-bold py-4 px-8 rounded-2xl text-2xl shadow-xl hover:bg-green-400 transition-transform transform hover:scale-105 flex items-center justify-center">
+                        🔄 เริ่มเกมใหม่
+                    </button>
+                    <button class="interactable btn-menu bg-white text-gray-900 border-4 border-gray-300 font-bold py-4 px-8 rounded-2xl text-2xl shadow-xl hover:bg-gray-200 transition-transform transform hover:scale-105 flex items-center justify-center">
+                        🏠 เมนูหลัก
+                    </button>
+                </div>
+            </div>
+            
+            <!-- เลเยอร์เอฟเฟกต์แสงวาบ (Flash) -->
+            <div id="flash-effect" class="absolute inset-0 pointer-events-none z-30 opacity-0 mix-blend-overlay"></div>
+
+            <!-- การแจ้งเตือนตอบถูก/ผิด -->
+            <div id="feedback-overlay" class="absolute inset-0 hidden items-center justify-center pointer-events-none z-40">
+                <div id="feedback-icon" class="text-[150px] font-bold opacity-0 transition-opacity duration-200 text-center">✅</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === การจัดการเสียง (Synthesized) ===
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+
+        // === ตรรกะการแปลงอุณหภูมิ (แบบลงตัว) ===
+        const units = ['°C', '°F', 'K', '°R'];
+        // ค่า base (C) ที่เป็นพหุคูณของ 20 เพื่อให้ C->F และ C->R ลงตัว 100%
+        const baseC_options = [-60, -40, -20, 0, 20, 40, 60, 80, 100, 120, 140, 160];
+
+        let currentCorrectAnswer = 0;
+
+        function generateQuestionData() {
+            // สุ่มอุณหภูมิต้นทาง
+            const baseC = baseC_options[Math.floor(Math.random() * baseC_options.length)];
+            
+            // คำนวณค่าทุกหน่วย (ใช้ K = C + 273 เพื่อให้ลงตัวตามหลักสูตรพื้นฐาน)
+            const values = {
+                '°C': baseC,
+                '°F': baseC * (9/5) + 32,
+                'K': baseC + 273,
+                '°R': baseC * (4/5)
+            };
+
+            // สุ่มหน่วยเริ่มและหน่วยปลายทาง
+            let fromUnit, toUnit;
+            do {
+                fromUnit = units[Math.floor(Math.random() * units.length)];
+                toUnit = units[Math.floor(Math.random() * units.length)];
+            } while (fromUnit === toUnit);
+
+            const questionText = `${values[fromUnit]} ${fromUnit} = ? ${toUnit}`;
+            const targetUnitText = toUnit;
+            currentCorrectAnswer = values[toUnit];
+
+            // สร้างตัวเลือกหลอก
+            let choices = new Set([currentCorrectAnswer]);
+            while (choices.size < 4) {
+                // สุ่ม baseC อื่นมาแปลง
+                let wrongBaseC = baseC_options[Math.floor(Math.random() * baseC_options.length)];
+                if (wrongBaseC === baseC) wrongBaseC += 40;
+                
+                // บางครั้งใช้สูตรผิดพลาดในการหลอก
+                const randErr = Math.random();
+                let wrongAns;
+                if (randErr < 0.25) wrongAns = wrongBaseC * (9/5) + 32;
+                else if (randErr < 0.5) wrongAns = wrongBaseC + 273;
+                else if (randErr < 0.75) wrongAns = wrongBaseC * (4/5);
+                else wrongAns = wrongBaseC;
+
+                choices.add(Math.round(wrongAns));
+            }
+
+            let choicesArray = Array.from(choices);
+            choicesArray.sort(() => Math.random() - 0.5); // สลับตำแหน่ง
+
+            return { text: questionText, targetText: targetUnitText, choices: choicesArray, answer: currentCorrectAnswer };
+        }
+
+        // === ระบบจัดการเกม (Game Loop) ===
+        let score = 0;
+        let timeLeft = 0;
+        let gameMode = ''; // '30s', '60s', 'survivor'
+        let timerInterval = null;
+        let isPlaying = false;
+        // ตัวแปรเก็บสถิติ
+        let correctCount = 0;
+        let wrongCount = 0;
+
+        const elScore = document.getElementById('score-display');
+        const elTimer = document.getElementById('timer-display');
+        const elQuestion = document.getElementById('question-text');
+        const elTargetUnit = document.getElementById('target-unit-text');
+        const elChoices = document.getElementById('choices-container');
+        
+        const screenMenu = document.getElementById('screen-menu');
+        const screenPlay = document.getElementById('screen-play');
+        const screenGameover = document.getElementById('screen-gameover');
+        const finalScore = document.getElementById('final-score');
+        const finalCorrect = document.getElementById('final-correct');
+        const finalWrong = document.getElementById('final-wrong');
+        const feedbackOverlay = document.getElementById('feedback-overlay');
+        const feedbackIcon = document.getElementById('feedback-icon');
+        const flashEffect = document.getElementById('flash-effect');
+        const gameContainer = document.getElementById('game-container');
+
+        function showScreen(screen) {
+            document.getElementById('screen-loading').classList.add('hidden');
+            screenMenu.classList.add('hidden');
+            screenPlay.classList.add('hidden');
+            screenGameover.classList.add('hidden');
+            
+            screen.classList.remove('hidden');
+            // ใช้ flex/block ขึ้นอยู่กับหน้า
+            if (screen === screenPlay) {
+                screen.classList.add('block');
+            } else {
+                screen.classList.add('flex');
+            }
+            screen.classList.add('fade-in');
+            
+            // รีเซ็ต hover เล็กน้อยเมื่อเปลี่ยนหน้า
+            hoverTarget = null;
+            hoverProgress = 0;
+        }
+
+        function loadQuestion() {
+            const q = generateQuestionData();
+            elQuestion.innerText = q.text;
+            elTargetUnit.innerText = q.targetText;
+            
+            elChoices.innerHTML = '';
+            q.choices.forEach(choice => {
+                const btn = document.createElement('button');
+                // เพิ่ม flex items-center justify-center ให้ตัวเลขอยู่กึ่งกลางปุ่มเป๊ะๆ
+                btn.className = 'interactable choice-btn bg-gray-700/80 hover:bg-gray-600 border-4 border-gray-500 text-white rounded-2xl p-6 text-5xl font-bold shadow-lg transition-transform flex items-center justify-center text-center';
+                btn.innerText = choice;
+                btn.onclick = () => checkAnswer(choice, btn);
+                elChoices.appendChild(btn);
+            });
+        }
+
+        function triggerVisualEffects(isCorrect, btnElement) {
+            // ปุ่มเด้ง
+            btnElement.classList.add('fx-pop');
+
+            // หน้าจอสั่น
+            gameContainer.classList.add('fx-shake');
+
+            // แฟลชสายฟ้า / สีแดง
+            flashEffect.classList.remove('opacity-0');
+            if (isCorrect) {
+                flashEffect.classList.add('fx-lightning');
+            } else {
+                flashEffect.classList.add('fx-error');
+            }
+
+            // ล้างคลาสแอนิเมชันหลังเล่นจบ (ประมาณ 0.6 วินาที)
+            setTimeout(() => {
+                btnElement.classList.remove('fx-pop');
+                gameContainer.classList.remove('fx-shake');
+                flashEffect.classList.remove('fx-lightning', 'fx-error');
+                flashEffect.classList.add('opacity-0');
+            }, 600);
+        }
+
+        function showFeedback(isCorrect) {
+            feedbackOverlay.classList.remove('hidden');
+            feedbackOverlay.style.display = 'flex';
+            feedbackIcon.innerText = isCorrect ? '✅' : '❌';
+            feedbackIcon.className = isCorrect ? 'text-[150px] font-bold text-green-500 drop-shadow-[0_0_20px_rgba(34,197,94,1)] text-center' : 'text-[150px] font-bold text-red-500 drop-shadow-[0_0_20px_rgba(239,68,68,1)] text-center';
+            feedbackIcon.style.opacity = '1';
+            
+            setTimeout(() => {
+                feedbackIcon.style.opacity = '0';
+                setTimeout(() => {
+                    feedbackOverlay.style.display = 'none';
+                }, 200);
+            }, 600);
+        }
+
+        function checkAnswer(selectedAnswer, btnElement) {
+            if (!isPlaying) return;
+            
+            const isCorrect = (selectedAnswer === currentCorrectAnswer);
+            triggerVisualEffects(isCorrect, btnElement);
+
+            if (isCorrect) {
+                playSound('correct');
+                score += 10;
+                correctCount++; // เพิ่มจำนวนข้อที่ถูก
+                btnElement.classList.remove('border-gray-500', 'bg-gray-700/80');
+                btnElement.classList.add('border-green-500', 'bg-green-600');
+                showFeedback(true);
+                
+                if (gameMode === 'survivor') {
+                    timeLeft += 3; // โหมด survivor ตอบถูกเพิ่ม 3 วิ
+                    elTimer.classList.add('text-green-400');
+                    setTimeout(() => elTimer.classList.remove('text-green-400'), 300);
+                }
+            } else {
+                playSound('wrong');
+                wrongCount++; // เพิ่มจำนวนข้อที่ผิด
+                btnElement.classList.remove('border-gray-500', 'bg-gray-700/80');
+                btnElement.classList.add('border-red-500', 'bg-red-600');
+                showFeedback(false);
+                
+                if (gameMode === 'survivor') {
+                    timeLeft -= 5; // โหมด survivor ตอบผิดลบ 5 วิ
+                    elTimer.classList.add('text-red-500');
+                    setTimeout(() => elTimer.classList.remove('text-red-500'), 300);
+                }
+            }
+            
+            elScore.innerText = score;
+            updateTimerDisplay();
+
+            // ดีเลย์เล็กน้อยก่อนโหลดข้อใหม่ให้พอดีกับเอฟเฟกต์
+            isPlaying = false;
+            setTimeout(() => {
+                if (timeLeft > 0) {
+                    loadQuestion();
+                    isPlaying = true;
+                }
+            }, 800);
+        }
+
+        function startGame(mode) {
+            gameMode = mode;
+            score = 0;
+            correctCount = 0; // รีเซ็ตสถิติ
+            wrongCount = 0;
+            elScore.innerText = score;
+            
+            if (mode === '30s') timeLeft = 30;
+            else if (mode === '60s') timeLeft = 60;
+            else if (mode === 'survivor') timeLeft = 45; // เริ่มที่ 45 วิ สำหรับ survivor
+            
+            updateTimerDisplay();
+            showScreen(screenPlay);
+            loadQuestion();
+            isPlaying = true;
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                if (!isPlaying) return; // หยุดเวลาชั่วคราวตอนเช็คคำตอบ
+                timeLeft--;
+                updateTimerDisplay();
+                
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            if (timeLeft < 0) timeLeft = 0;
+            elTimer.innerText = timeLeft;
+            if (timeLeft <= 5) elTimer.className = 'text-3xl font-bold text-red-500 animate-pulse';
+            else elTimer.className = 'text-3xl font-bold text-yellow-400';
+        }
+
+        function endGame() {
+            isPlaying = false;
+            clearInterval(timerInterval);
+            finalScore.innerText = score;
+            // อัปเดตสรุปผล
+            finalCorrect.innerText = correctCount;
+            finalWrong.innerText = wrongCount;
+            showScreen(screenGameover);
+        }
+
+        // เชื่อมปุ่มเมนู (Fallback สำหรับเมาส์และเรียกใช้ผ่าน Hover)
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                startGame(btn.getAttribute('data-mode'));
+            });
+        });
+
+        document.querySelector('.btn-menu').addEventListener('click', () => {
+            showScreen(screenMenu);
+        });
+
+        // ปุ่มเริ่มเกมใหม่ในหน้า Game Over
+        document.getElementById('btn-restart').addEventListener('click', () => {
+            startGame(gameMode);
+        });
+
+        // === ระบบตรวจจับมือ (MediaPipe Hand Tracking) ===
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const cursor = document.getElementById('cursor');
+        const uiLayer = document.getElementById('ui-layer');
+
+        let hoverTarget = null;
+        let hoverProgress = 0;
+        const HOVER_TIME_MS = 1200; // เวลาที่ต้องชี้ค้างไว้ (1.2 วินาที)
+        let lastTime = performance.now();
+
+        function onResults(results) {
+            const now = performance.now();
+            const deltaTime = now - lastTime;
+            lastTime = now;
+
+            // วาดภาพจากกล้องลง Canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            // กลับด้านภาพเพื่อให้เหมือนกระจก (กลับใน Context อย่างเดียว ไม่ใช้ CSS เพื่อไม่ให้ภาพเพี้ยนซ้อนทับ)
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let cursorVisible = false;
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // วาดเส้นและจุดโครงสร้างมือ
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#ffffff', lineWidth: 2});
+                    drawLandmarks(canvasCtx, landmarks, {color: '#3b82f6', lineWidth: 1, radius: 3});
+                }
+
+                // ดึงตำแหน่งปลายนิ้วชี้ (Landmark 8)
+                const indexFingerTip = results.multiHandLandmarks[0][8];
+                cursorVisible = true;
+
+                // แมปพิกัดจากกล้องมาเป็นหน้าจอ DOM
+                // x ถูกตั้งให้กลับด้านด้วย 1 - x เพื่อให้ตรงกับจอที่เหมือนกระจก
+                const uiRect = uiLayer.getBoundingClientRect();
+                const pointerX = (1 - indexFingerTip.x) * uiRect.width;
+                const pointerY = indexFingerTip.y * uiRect.height;
+
+                // อัปเดตตำแหน่งจุดแดง (Cursor) - วางให้อยู่กึ่งกลางเป๊ะ
+                cursor.style.left = `${pointerX}px`;
+                cursor.style.top = `${pointerY}px`;
+                cursor.style.display = 'block';
+
+                // --- ระบบ Hover ชนวัตถุ ---
+                let currentHover = null;
+                // หา element ที่มี class 'interactable' และมองเห็นได้
+                const interactables = document.querySelectorAll('.interactable');
+                for (let el of interactables) {
+                    // ตรวจสอบว่าปุ่มอยู่ในหน้าจอที่ active หรือไม่ (เช็ค parent)
+                    if (el.closest('.hidden')) continue;
+
+                    const elRect = el.getBoundingClientRect();
+                    // คำนวณพิกัดชนเป้าหมายที่แท้จริง
+                    const globalX = uiRect.left + pointerX;
+                    const globalY = uiRect.top + pointerY;
+
+                    if (globalX >= elRect.left && globalX <= elRect.right &&
+                        globalY >= elRect.top && globalY <= elRect.bottom) {
+                        currentHover = el;
+                        break;
+                    }
+                }
+
+                // ประมวลผลเวลาชี้ค้าง
+                if (currentHover) {
+                    if (currentHover === hoverTarget) {
+                        hoverProgress += deltaTime;
+                        // ขยาย Cursor นิดนึงเวลากำลังชาร์จ
+                        cursor.style.width = '30px';
+                        cursor.style.height = '30px';
+                        cursor.style.backgroundColor = '#facc15'; // yellow-400
+
+                        if (hoverProgress >= HOVER_TIME_MS) {
+                            // จำลองการคลิก
+                            currentHover.click();
+                            hoverProgress = 0;
+                            hoverTarget = null;
+                            // Reset CSS var
+                            currentHover.style.setProperty('--hover-progress', '0%');
+                        } else {
+                            // อัปเดตหลอดสีเขียวใต้ปุ่ม
+                            const pct = (hoverProgress / HOVER_TIME_MS) * 100;
+                            currentHover.style.setProperty('--hover-progress', `${pct}%`);
+                        }
+                    } else {
+                        // เปลี่ยนเป้าหมายที่ Hover
+                        if (hoverTarget) hoverTarget.style.setProperty('--hover-progress', '0%');
+                        hoverTarget = currentHover;
+                        hoverProgress = 0;
+                    }
+                } else {
+                    // ไม่ได้ชี้อะไรเลย
+                    if (hoverTarget) {
+                        hoverTarget.style.setProperty('--hover-progress', '0%');
+                        hoverTarget = null;
+                    }
+                    hoverProgress = 0;
+                    cursor.style.width = '20px';
+                    cursor.style.height = '20px';
+                    cursor.style.backgroundColor = '#ef4444'; // คืนสีแดง
+                }
+
+            } else {
+                // หากไม่พบมือในกล้อง
+                cursor.style.display = 'none';
+                if (hoverTarget) {
+                    hoverTarget.style.setProperty('--hover-progress', '0%');
+                    hoverTarget = null;
+                }
+                hoverProgress = 0;
+            }
+
+            canvasCtx.restore();
+        }
+
+        // --- ตั้งค่าเริ่มต้นเมื่อกดเปิดกล้อง ---
+        document.getElementById('btn-start-cam').addEventListener('click', () => {
+            document.getElementById('btn-start-cam').classList.add('hidden');
+            document.getElementById('loading-spinner').classList.remove('hidden');
+            document.getElementById('loading-spinner').classList.add('flex');
+            
+            // Audio context ต้องถูก resume จาก User Gesture
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1, // จับแค่มือเดียว
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+            hands.onResults(onResults);
+
+            // เซ็ต Canvas resolution ให้ตรงกับกล้องเว็บแคมมาตรฐาน 16:9
+            canvasElement.width = 1280;
+            canvasElement.height = 720;
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 1280,
+                height: 720
+            });
+            
+            camera.start().then(() => {
+                // โหลดสำเร็จ เปิดเมนู
+                showScreen(screenMenu);
+            }).catch(err => {
+                alert("ไม่สามารถเข้าถึงกล้องได้ กรุณาตรวจสอบสิทธิ์การอนุญาต: " + err);
+                document.getElementById('btn-start-cam').classList.remove('hidden');
+                document.getElementById('loading-spinner').classList.add('hidden');
+            });
+        });
+
+    </script>
+</body>
+</html>
