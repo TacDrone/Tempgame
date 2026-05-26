@@ -116,8 +116,8 @@
         @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
 
         /* =========================================
-           Visual Effects สุดอลังการสำหรับตอบคำถาม
-           ========================================= */
+            Visual Effects สุดอลังการสำหรับตอบคำถาม
+            ========================================= */
         
         /* แสงวาบแบบสายฟ้าฟาด (ตอบถูก) */
         @keyframes flash-lightning {
@@ -204,7 +204,7 @@
                     </button>
                     <button class="interactable mode-btn bg-red-600 border-4 border-red-700 text-white rounded-2xl p-6 flex-1 text-center shadow-xl flex flex-col items-center justify-center" data-mode="survivor">
                         <span class="text-4xl mb-2 font-bold">🔥 Survivor</span>
-                        <span class="text-lg opacity-80">ตอบถูกเพิ่มเวลา</span>
+                        <span class="text-lg opacity-80">เวลา 90 วิ ตอบผิดหักคะแนน</span>
                     </button>
                 </div>
             </div>
@@ -493,6 +493,9 @@
                 btnElement.classList.remove('border-gray-500', 'bg-gray-700/80');
                 btnElement.classList.add('border-red-500', 'bg-red-600');
                 showFeedback(false);
+
+                // หัก 5 คะแนนเมื่อตอบผิด
+                score -= 5;
                 
                 if (gameMode === 'survivor') {
                     timeLeft -= 5; // โหมด survivor ตอบผิดลบ 5 วิ
@@ -523,7 +526,7 @@
             
             if (mode === '30s') timeLeft = 30;
             else if (mode === '60s') timeLeft = 60;
-            else if (mode === 'survivor') timeLeft = 45; // เริ่มที่ 45 วิ สำหรับ survivor
+            else if (mode === 'survivor') timeLeft = 90; // เริ่มที่ 90 วิ สำหรับ survivor ตามที่ขอ
             
             updateTimerDisplay();
             showScreen(screenPlay);
